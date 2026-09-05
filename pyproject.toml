@@ -1,0 +1,22 @@
+[project]
+name = "numbers-logger"
+version = "0.1.0"
+description = "Personal macOS menu-bar app that OCRs a selected screen region and logs numbers to CSV"
+readme = "README.md"
+authors = [
+    { name = "adriano", email = "adrianoj.queirosd@hes-so.ch" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "mss>=10.2.0",
+    "ocrmac>=1.0.1",
+    "pillow>=12.3.0",
+    "rumps>=0.4.0",
+]
+
+[project.scripts]
+numbers-logger = "numbers_logger.__main__:main"
+
+[build-system]
+requires = ["uv_build>=0.12.10,<0.13.0"]
+build-backend = "uv_build"

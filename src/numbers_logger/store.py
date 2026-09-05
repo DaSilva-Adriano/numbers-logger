@@ -1,0 +1,171 @@
+"""Persistent settings (`~/.numbers-logger/config.json`) and CSV logging."""
+
+from __future__ import annotations
+
+import csv
+import json
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+from numbers_logger.parse import format_value
+
+CONFIG_DIR = Path.home() / ".numbers-logger"
+CONFIG_PATH = CONFIG_DIR / "config.json"
+DEFAULT_CSV_PATH = str(Path.home() / "numbers.csv")
+CSV_HEADER = ["timestamp", "value", "raw", "region"]
+MIN_INTERVAL_SECONDS = 0.2
+
+
+@dataclass
+class Region:
+    x: float
+    y: float
+    width: float
+    height: float
+    scale: float = 1.0
+
+    def as_dict(self) -> dict[str, float]:
+        return {
+            "x": self.x,
+            "y": self.y,
+            "width": self.width,
+            "height": self.height,
+            "scale": self.scale,
+        }
+
+    def csv_cell(self) -> str:
+        return f"x={self.x:g},y={self.y:g},w={self.width:g},h={self.height:g}"
+
+    def is_valid(self) -> bool:
+        return self.width >= 2 and self.height >= 2
+
+
+@dataclass
+class Config:
+    interval_seconds: float = 1.0
+    csv_path: str = DEFAULT_CSV_PATH
+    log_only_on_change: bool = True
+    min_confidence: float = 0.3
+    region: Region | None = field(default=None)
+
+    def expanded_csv_path(self) -> Path:
+        return Path(self.csv_path).expanduser()
+
+
+def load_config(path: Path | None = None) -> Config:
+    config_path = path or CONFIG_PATH
+    if not config_path.exists():
+        return Config()
+    try:
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"Could not read {config_path}: {exc}. Using defaults.")
+        return Config()
+    if not isinstance(data, dict):
+        return Config()
+    return Config(
+        interval_seconds=_clamp_interval(data.get("interval_seconds", 1.0)),
+        csv_path=_as_str(data.get("csv_path"), DEFAULT_CSV_PATH),
+        log_only_on_change=_as_bool(data.get("log_only_on_change"), True),
+        min_confidence=_clamp_confidence(data.get("min_confidence", 0.3)),
+        region=_parse_region(data.get("region")),
+    )
+
+
+def save_config(config: Config, path: Path | None = None) -> None:
+    config_path = path or CONFIG_PATH
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    payload: dict[str, Any] = {
+        "interval_seconds": _clamp_interval(config.interval_seconds),
+        "csv_path": config.csv_path,
+        "log_only_on_change": bool(config.log_only_on_change),
+        "min_confidence": _clamp_confidence(config.min_confidence),
+        "region": config.region.as_dict() if config.region is not None else None,
+    }
+    tmp = config_path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(config_path)
+
+
+def ensure_csv(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists() and path.stat().st_size > 0:
+        return
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        csv.writer(handle).writerow(CSV_HEADER)
+        handle.flush()
+
+
+def append_row(
+    *,
+    value: float,
+    raw: str,
+    region: Region,
+    csv_path: str,
+    timestamp: datetime | None = None,
+) -> None:
+    path = Path(csv_path).expanduser()
+    ensure_csv(path)
+    stamp = (timestamp or datetime.now().astimezone()).isoformat(timespec="seconds")
+    with path.open("a", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow([stamp, format_value(value), raw, region.csv_cell()])
+        handle.flush()
+
+
+def _parse_region(value: Any) -> Region | None:
+    if not isinstance(value, dict):
+        return None
+    try:
+        region = Region(
+            x=float(value["x"]),
+            y=float(value["y"]),
+            width=float(value["width"]),
+            height=float(value["height"]),
+            scale=float(value.get("scale", 1.0) or 1.0),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not region.is_valid():
+        return None
+    if region.scale <= 0:
+        region.scale = 1.0
+    return region
+
+
+def _clamp_interval(value: Any) -> float:
+    try:
+        interval = float(value)
+    except (TypeError, ValueError):
+        interval = 1.0
+    return max(MIN_INTERVAL_SECONDS, interval)
+
+
+def _clamp_confidence(value: Any) -> float:
+    try:
+        confidence = float(value)
+    except (TypeError, ValueError):
+        confidence = 0.3
+    return min(1.0, max(0.0, confidence))
+
+
+def _as_bool(value: Any, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "off"}:
+            return False
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return default
+
+
+def _as_str(value: Any, default: str) -> str:
+    if isinstance(value, str) and value.strip():
+        return value
+    return default
