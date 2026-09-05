@@ -82,6 +82,7 @@ def _load_ns() -> dict[str, Any]:
             NSObject,
             NSOffState,
             NSOnState,
+            NSOpenPanel,
             NSSavePanel,
             NSScreen,
             NSSwitchButton,
@@ -213,6 +214,7 @@ def _load_ns() -> dict[str, Any]:
         "NSMakeRect": NSMakeRect,
         "NSOffState": NSOffState,
         "NSOnState": NSOnState,
+        "NSOpenPanel": NSOpenPanel,
         "NSSavePanel": NSSavePanel,
         "NSScreen": NSScreen,
         "NSSwitchButton": NSSwitchButton,
@@ -394,7 +396,7 @@ class SettingsPanel:
 
         add_label("Interval (seconds)", 190)
         add_entry(str(self.config.interval_seconds), 190, "interval")
-        add_label("CSV path", 150)
+        add_label("CSV folder", 150)
         add_entry(self.config.csv_path, 150, "csv", 190)
 
         browse = ns["NSButton"].alloc().initWithFrame_(ns["NSMakeRect"](378, 146, 64, 28))
@@ -436,11 +438,12 @@ class SettingsPanel:
 
     def browse_(self, _sender) -> None:
         ns = _load_ns()
-        panel = ns["NSSavePanel"].savePanel()
-        panel.setTitle_("CSV path")
-        panel.setAllowedFileTypes_(["csv"])
+        panel = ns["NSOpenPanel"].openPanel()
+        panel.setTitle_("CSV folder")
+        panel.setCanChooseFiles_(False)
+        panel.setCanChooseDirectories_(True)
+        panel.setAllowsMultipleSelection_(False)
         panel.setCanCreateDirectories_(True)
-        panel.setNameFieldStringValue_("numbers.csv")
         if int(panel.runModal()) == 1:
             url = panel.URL()
             if url is not None:
@@ -471,7 +474,7 @@ class SettingsPanel:
             _alert("Min confidence must be between 0 and 1.")
             return
         if not csv_path:
-            _alert("CSV path is required.")
+            _alert("CSV folder is required.")
             return
         ns = _load_ns()
         self.result = Config(

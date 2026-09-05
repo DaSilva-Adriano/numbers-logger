@@ -13,7 +13,7 @@ from numbers_logger.parse import format_value
 
 CONFIG_DIR = Path.home() / ".numbers-logger"
 CONFIG_PATH = CONFIG_DIR / "config.json"
-DEFAULT_CSV_PATH = str(Path.home() / "numbers.csv")
+DEFAULT_CSV_DIR = str(Path.home() / "Documents" / "numbers-logger")
 CSV_HEADER = ["timestamp", "value", "raw", "region"]
 MIN_INTERVAL_SECONDS = 0.2
 
@@ -45,12 +45,12 @@ class Region:
 @dataclass
 class Config:
     interval_seconds: float = 1.0
-    csv_path: str = DEFAULT_CSV_PATH
+    csv_path: str = DEFAULT_CSV_DIR
     log_only_on_change: bool = True
     min_confidence: float = 0.3
     region: Region | None = field(default=None)
 
-    def expanded_csv_path(self) -> Path:
+    def expanded_csv_dir(self) -> Path:
         return Path(self.csv_path).expanduser()
 
 
@@ -67,7 +67,9 @@ def load_config(path: Path | None = None) -> Config:
         return Config()
     return Config(
         interval_seconds=_clamp_interval(data.get("interval_seconds", 1.0)),
-        csv_path=_as_str(data.get("csv_path"), DEFAULT_CSV_PATH),
+        csv_path=_normalize_csv_dir(
+            _as_str(data.get("csv_dir") or data.get("csv_path"), DEFAULT_CSV_DIR)
+        ),
         log_only_on_change=_as_bool(data.get("log_only_on_change"), True),
         min_confidence=_clamp_confidence(data.get("min_confidence", 0.3)),
         region=_parse_region(data.get("region")),
@@ -87,6 +89,20 @@ def save_config(config: Config, path: Path | None = None) -> None:
     tmp = config_path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     tmp.replace(config_path)
+
+
+def new_session_csv(directory: str | Path, when: datetime | None = None) -> Path:
+    """Create a timestamped CSV in `directory` and write the header."""
+    folder = Path(directory).expanduser()
+    folder.mkdir(parents=True, exist_ok=True)
+    stamp = (when or datetime.now()).strftime("%Y-%m-%d_%H-%M-%S")
+    path = folder / f"numbers-{stamp}.csv"
+    suffix = 2
+    while path.exists():
+        path = folder / f"numbers-{stamp}_{suffix}.csv"
+        suffix += 1
+    ensure_csv(path)
+    return path
 
 
 def ensure_csv(path: Path) -> None:
@@ -169,3 +185,15 @@ def _as_str(value: Any, default: str) -> str:
     if isinstance(value, str) and value.strip():
         return value
     return default
+
+
+def _normalize_csv_dir(value: str) -> str:
+    """Treat settings as a folder. Old configs stored a file path."""
+    path = Path(value).expanduser()
+    old_default = Path.home() / "numbers.csv"
+    if path == old_default:
+        return DEFAULT_CSV_DIR
+    if value.lower().endswith(".csv") or (path.exists() and path.is_file()):
+        parent = path.parent
+        return str(parent) if str(parent) not in {"", "."} else DEFAULT_CSV_DIR
+    return str(path)

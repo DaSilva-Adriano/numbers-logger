@@ -18,7 +18,13 @@ from numbers_logger.capture import (
 )
 from numbers_logger.ocr import image_to_text
 from numbers_logger.parse import format_value, parse_number
-from numbers_logger.store import Region, append_row, ensure_csv, load_config, save_config
+from numbers_logger.store import (
+    Region,
+    append_row,
+    load_config,
+    new_session_csv,
+    save_config,
+)
 
 IDLE_TITLE = "123"
 PERMISSION_MESSAGE = (
@@ -51,6 +57,7 @@ class NumbersLoggerApp(rumps.App):
         self._permission_missing = False
         self._title_text = IDLE_TITLE
         self._last_value: float | None = None
+        self._session_csv: str | None = None
 
         self.start_item = rumps.MenuItem("Start watching", callback=self.start_watching)
         self.stop_item = rumps.MenuItem("Stop watching", callback=None)
@@ -93,11 +100,15 @@ class NumbersLoggerApp(rumps.App):
             return
         if self._watching:
             return
+        session = new_session_csv(config.expanded_csv_dir())
         self._stop.clear()
         self._last_value = None
+        with self._lock:
+            self._session_csv = str(session)
         self._watching = True
         self._set_watching_menu(True)
         self._title_text = "…"
+        print(f"logging to {session}", flush=True)
         self._thread = threading.Thread(target=self._watch_loop, name="watch", daemon=True)
         self._thread.start()
 
@@ -142,9 +153,11 @@ class NumbersLoggerApp(rumps.App):
 
     def open_csv(self, _sender: rumps.MenuItem | None = None) -> None:
         with self._lock:
-            path = self.config.expanded_csv_path()
-        ensure_csv(path)
-        subprocess.run(["open", str(path)], check=False)
+            session = self._session_csv
+            folder = self.config.expanded_csv_dir()
+        folder.mkdir(parents=True, exist_ok=True)
+        target = session if session else str(folder)
+        subprocess.run(["open", target], check=False)
 
     def open_settings(self, _sender: rumps.MenuItem | None = None) -> None:
         _run_helper("--settings", expect_json=False)
@@ -188,7 +201,11 @@ class NumbersLoggerApp(rumps.App):
             return
         if config.log_only_on_change and last_value is not None and value == last_value:
             return
-        append_row(value=value, raw=raw, region=config.region, csv_path=config.csv_path)
+        with self._lock:
+            session = self._session_csv
+        if not session:
+            return
+        append_row(value=value, raw=raw, region=config.region, csv_path=session)
         print(format_value(value), flush=True)
         with self._lock:
             self._last_value = value
