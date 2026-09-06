@@ -21,6 +21,7 @@ from numbers_logger.parse import format_value, parse_number
 from numbers_logger.store import (
     Region,
     append_row,
+    auto_stop_elapsed,
     load_config,
     new_session_csv,
     save_config,
@@ -58,6 +59,7 @@ class NumbersLoggerApp(rumps.App):
         self._title_text = IDLE_TITLE
         self._last_value: float | None = None
         self._session_csv: str | None = None
+        self._session_started_at: float | None = None
 
         self.start_item = rumps.MenuItem("Start watching", callback=self.start_watching)
         self.stop_item = rumps.MenuItem("Stop watching", callback=None)
@@ -87,6 +89,8 @@ class NumbersLoggerApp(rumps.App):
             refresh_screens()
             if self.config.region is None:
                 self.select_region(None)
+            return
+        self._maybe_auto_stop()
 
     def start_watching(self, _sender: rumps.MenuItem | None = None) -> None:
         with self._lock:
@@ -105,6 +109,7 @@ class NumbersLoggerApp(rumps.App):
         self._last_value = None
         with self._lock:
             self._session_csv = str(session)
+            self._session_started_at = time.monotonic()
         self._watching = True
         self._set_watching_menu(True)
         self._title_text = "…"
@@ -117,10 +122,28 @@ class NumbersLoggerApp(rumps.App):
         self._stop.set()
         thread = self._thread
         self._thread = None
+        with self._lock:
+            self._session_started_at = None
         if thread is not None and thread.is_alive() and threading.current_thread() is not thread:
             thread.join(timeout=2.0)
         self._set_watching_menu(False)
         self._title_text = IDLE_TITLE
+
+    def _maybe_auto_stop(self) -> None:
+        if not self._watching:
+            return
+        with self._lock:
+            config = self.config
+            started = self._session_started_at
+        if not auto_stop_elapsed(
+            started,
+            enabled=config.auto_stop_enabled,
+            minutes=config.auto_stop_minutes,
+            now=time.monotonic(),
+        ):
+            return
+        print(f"auto-stopped after {config.auto_stop_minutes:g} minutes", flush=True)
+        self.stop_watching(None)
 
     def select_region(self, _sender: rumps.MenuItem | None = None) -> None:
         was_watching = self._watching

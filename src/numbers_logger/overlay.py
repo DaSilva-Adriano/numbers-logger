@@ -13,7 +13,13 @@ import sys
 from typing import Any, Callable
 
 from numbers_logger.capture import refresh_screens, screen_containing
-from numbers_logger.store import MIN_INTERVAL_SECONDS, Config, load_config, save_config
+from numbers_logger.store import (
+    MIN_AUTO_STOP_MINUTES,
+    MIN_INTERVAL_SECONDS,
+    Config,
+    load_config,
+    save_config,
+)
 
 MIN_SELECTION = 4
 _NS: dict[str, Any] | None = None
@@ -362,7 +368,7 @@ class SettingsPanel:
 
     def start(self) -> None:
         ns = _load_ns()
-        width, height = 460.0, 250.0
+        width, height = 460.0, 340.0
         screen = ns["NSScreen"].mainScreen().frame()
         origin_x = screen.origin.x + (screen.size.width - width) / 2.0
         origin_y = screen.origin.y + (screen.size.height - height) / 2.0
@@ -394,27 +400,37 @@ class SettingsPanel:
             content.addSubview_(field)
             self._fields[key] = field
 
-        add_label("Interval (seconds)", 190)
-        add_entry(str(self.config.interval_seconds), 190, "interval")
-        add_label("CSV folder", 150)
-        add_entry(self.config.csv_path, 150, "csv", 190)
+        add_label("Interval (seconds)", 280)
+        add_entry(str(self.config.interval_seconds), 280, "interval")
+        add_label("CSV folder", 240)
+        add_entry(self.config.csv_path, 240, "csv", 190)
 
-        browse = ns["NSButton"].alloc().initWithFrame_(ns["NSMakeRect"](378, 146, 64, 28))
+        browse = ns["NSButton"].alloc().initWithFrame_(ns["NSMakeRect"](378, 236, 64, 28))
         browse.setTitle_("Browse")
         browse.setBezelStyle_(1)
         browse.setTarget_(controller)
         browse.setAction_("browse:")
         content.addSubview_(browse)
 
-        change = ns["NSButton"].alloc().initWithFrame_(ns["NSMakeRect"](20, 108, 420, 24))
+        change = ns["NSButton"].alloc().initWithFrame_(ns["NSMakeRect"](20, 198, 420, 24))
         change.setButtonType_(ns["NSSwitchButton"])
         change.setTitle_("Log only when the number changes")
         change.setState_(ns["NSOnState"] if self.config.log_only_on_change else ns["NSOffState"])
         content.addSubview_(change)
         self._fields["change"] = change
 
-        add_label("Min confidence (0–1)", 70)
-        add_entry(str(self.config.min_confidence), 70, "confidence")
+        add_label("Min confidence (0–1)", 158)
+        add_entry(str(self.config.min_confidence), 158, "confidence")
+
+        auto_stop = ns["NSButton"].alloc().initWithFrame_(ns["NSMakeRect"](20, 118, 420, 24))
+        auto_stop.setButtonType_(ns["NSSwitchButton"])
+        auto_stop.setTitle_("Auto-stop recording")
+        auto_stop.setState_(ns["NSOnState"] if self.config.auto_stop_enabled else ns["NSOffState"])
+        content.addSubview_(auto_stop)
+        self._fields["auto_stop"] = auto_stop
+
+        add_label("After (minutes)", 78)
+        add_entry(str(self.config.auto_stop_minutes), 78, "auto_stop_minutes")
 
         cancel = ns["NSButton"].alloc().initWithFrame_(ns["NSMakeRect"](268, 20, 80, 32))
         cancel.setTitle_("Cancel")
@@ -456,6 +472,7 @@ class SettingsPanel:
     def save_(self, _sender) -> None:
         interval_text = str(self._fields["interval"].stringValue()).strip()
         confidence_text = str(self._fields["confidence"].stringValue()).strip()
+        minutes_text = str(self._fields["auto_stop_minutes"].stringValue()).strip()
         csv_path = str(self._fields["csv"].stringValue()).strip()
         try:
             interval = float(interval_text)
@@ -473,6 +490,14 @@ class SettingsPanel:
         if not 0.0 <= confidence <= 1.0:
             _alert("Min confidence must be between 0 and 1.")
             return
+        try:
+            minutes = float(minutes_text)
+        except ValueError:
+            _alert("Auto-stop duration must be a number of minutes.")
+            return
+        if minutes < MIN_AUTO_STOP_MINUTES:
+            _alert(f"Auto-stop duration must be at least {MIN_AUTO_STOP_MINUTES:g} minutes.")
+            return
         if not csv_path:
             _alert("CSV folder is required.")
             return
@@ -484,6 +509,10 @@ class SettingsPanel:
                 int(self._fields["change"].state()) == int(ns["NSOnState"])
             ),
             min_confidence=confidence,
+            auto_stop_enabled=bool(
+                int(self._fields["auto_stop"].state()) == int(ns["NSOnState"])
+            ),
+            auto_stop_minutes=minutes,
             region=self.config.region,
         )
         self.done = True
