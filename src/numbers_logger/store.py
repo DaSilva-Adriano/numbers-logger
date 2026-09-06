@@ -16,8 +16,11 @@ CONFIG_PATH = CONFIG_DIR / "config.json"
 DEFAULT_CSV_DIR = str(Path.home() / "Documents" / "numbers-logger")
 CSV_HEADER = ["timestamp", "value", "raw", "region"]
 MIN_INTERVAL_SECONDS = 0.2
-MIN_AUTO_STOP_MINUTES = 1.0
+MIN_TIMER_MINUTES = 1.0
+MIN_AUTO_STOP_MINUTES = MIN_TIMER_MINUTES
+MIN_AUTO_START_MINUTES = MIN_TIMER_MINUTES
 DEFAULT_AUTO_STOP_MINUTES = 60.0
+DEFAULT_AUTO_START_MINUTES = 60.0
 
 
 @dataclass
@@ -52,6 +55,8 @@ class Config:
     min_confidence: float = 0.3
     auto_stop_enabled: bool = False
     auto_stop_minutes: float = DEFAULT_AUTO_STOP_MINUTES
+    auto_start_enabled: bool = False
+    auto_start_minutes: float = DEFAULT_AUTO_START_MINUTES
     region: Region | None = field(default=None)
 
     def expanded_csv_dir(self) -> Path:
@@ -77,7 +82,13 @@ def load_config(path: Path | None = None) -> Config:
         log_only_on_change=_as_bool(data.get("log_only_on_change"), True),
         min_confidence=_clamp_confidence(data.get("min_confidence", 0.3)),
         auto_stop_enabled=_as_bool(data.get("auto_stop_enabled"), False),
-        auto_stop_minutes=_clamp_auto_stop_minutes(data.get("auto_stop_minutes")),
+        auto_stop_minutes=_clamp_minutes(
+            data.get("auto_stop_minutes"), default=DEFAULT_AUTO_STOP_MINUTES
+        ),
+        auto_start_enabled=_as_bool(data.get("auto_start_enabled"), False),
+        auto_start_minutes=_clamp_minutes(
+            data.get("auto_start_minutes"), default=DEFAULT_AUTO_START_MINUTES
+        ),
         region=_parse_region(data.get("region")),
     )
 
@@ -91,7 +102,13 @@ def save_config(config: Config, path: Path | None = None) -> None:
         "log_only_on_change": bool(config.log_only_on_change),
         "min_confidence": _clamp_confidence(config.min_confidence),
         "auto_stop_enabled": bool(config.auto_stop_enabled),
-        "auto_stop_minutes": _clamp_auto_stop_minutes(config.auto_stop_minutes),
+        "auto_stop_minutes": _clamp_minutes(
+            config.auto_stop_minutes, default=DEFAULT_AUTO_STOP_MINUTES
+        ),
+        "auto_start_enabled": bool(config.auto_start_enabled),
+        "auto_start_minutes": _clamp_minutes(
+            config.auto_start_minutes, default=DEFAULT_AUTO_START_MINUTES
+        ),
         "region": config.region.as_dict() if config.region is not None else None,
     }
     tmp = config_path.with_suffix(".json.tmp")
@@ -175,24 +192,24 @@ def _clamp_confidence(value: Any) -> float:
     return min(1.0, max(0.0, confidence))
 
 
-def _clamp_auto_stop_minutes(value: Any) -> float:
+def _clamp_minutes(value: Any, *, default: float) -> float:
     if value is None:
-        return DEFAULT_AUTO_STOP_MINUTES
+        return default
     try:
         minutes = float(value)
     except (TypeError, ValueError):
-        return DEFAULT_AUTO_STOP_MINUTES
-    return max(MIN_AUTO_STOP_MINUTES, minutes)
+        return default
+    return max(MIN_TIMER_MINUTES, minutes)
 
 
-def auto_stop_elapsed(
+def duration_elapsed(
     started_at: float | None,
     *,
     enabled: bool,
     minutes: float,
     now: float,
 ) -> bool:
-    """True when a watch session should stop because the auto-stop timer ran out."""
+    """True when an auto-start or auto-stop timer has reached its duration."""
     if not enabled or started_at is None:
         return False
     try:

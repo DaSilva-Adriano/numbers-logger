@@ -14,8 +14,8 @@ from typing import Any, Callable
 
 from numbers_logger.capture import refresh_screens, screen_containing
 from numbers_logger.store import (
-    MIN_AUTO_STOP_MINUTES,
     MIN_INTERVAL_SECONDS,
+    MIN_TIMER_MINUTES,
     Config,
     load_config,
     save_config,
@@ -368,7 +368,7 @@ class SettingsPanel:
 
     def start(self) -> None:
         ns = _load_ns()
-        width, height = 460.0, 340.0
+        width, height = 460.0, 420.0
         screen = ns["NSScreen"].mainScreen().frame()
         origin_x = screen.origin.x + (screen.size.width - width) / 2.0
         origin_y = screen.origin.y + (screen.size.height - height) / 2.0
@@ -400,37 +400,47 @@ class SettingsPanel:
             content.addSubview_(field)
             self._fields[key] = field
 
-        add_label("Interval (seconds)", 280)
-        add_entry(str(self.config.interval_seconds), 280, "interval")
-        add_label("CSV folder", 240)
-        add_entry(self.config.csv_path, 240, "csv", 190)
+        add_label("Interval (seconds)", 360)
+        add_entry(str(self.config.interval_seconds), 360, "interval")
+        add_label("CSV folder", 320)
+        add_entry(self.config.csv_path, 320, "csv", 190)
 
-        browse = ns["NSButton"].alloc().initWithFrame_(ns["NSMakeRect"](378, 236, 64, 28))
+        browse = ns["NSButton"].alloc().initWithFrame_(ns["NSMakeRect"](378, 316, 64, 28))
         browse.setTitle_("Browse")
         browse.setBezelStyle_(1)
         browse.setTarget_(controller)
         browse.setAction_("browse:")
         content.addSubview_(browse)
 
-        change = ns["NSButton"].alloc().initWithFrame_(ns["NSMakeRect"](20, 198, 420, 24))
+        change = ns["NSButton"].alloc().initWithFrame_(ns["NSMakeRect"](20, 278, 420, 24))
         change.setButtonType_(ns["NSSwitchButton"])
         change.setTitle_("Log only when the number changes")
         change.setState_(ns["NSOnState"] if self.config.log_only_on_change else ns["NSOffState"])
         content.addSubview_(change)
         self._fields["change"] = change
 
-        add_label("Min confidence (0–1)", 158)
-        add_entry(str(self.config.min_confidence), 158, "confidence")
+        add_label("Min confidence (0–1)", 238)
+        add_entry(str(self.config.min_confidence), 238, "confidence")
 
-        auto_stop = ns["NSButton"].alloc().initWithFrame_(ns["NSMakeRect"](20, 118, 420, 24))
+        auto_stop = ns["NSButton"].alloc().initWithFrame_(ns["NSMakeRect"](20, 198, 420, 24))
         auto_stop.setButtonType_(ns["NSSwitchButton"])
         auto_stop.setTitle_("Auto-stop recording")
         auto_stop.setState_(ns["NSOnState"] if self.config.auto_stop_enabled else ns["NSOffState"])
         content.addSubview_(auto_stop)
         self._fields["auto_stop"] = auto_stop
 
-        add_label("After (minutes)", 78)
-        add_entry(str(self.config.auto_stop_minutes), 78, "auto_stop_minutes")
+        add_label("Stop after (minutes)", 158)
+        add_entry(str(self.config.auto_stop_minutes), 158, "auto_stop_minutes")
+
+        auto_start = ns["NSButton"].alloc().initWithFrame_(ns["NSMakeRect"](20, 118, 420, 24))
+        auto_start.setButtonType_(ns["NSSwitchButton"])
+        auto_start.setTitle_("Auto-start recording")
+        auto_start.setState_(ns["NSOnState"] if self.config.auto_start_enabled else ns["NSOffState"])
+        content.addSubview_(auto_start)
+        self._fields["auto_start"] = auto_start
+
+        add_label("Start after (minutes)", 78)
+        add_entry(str(self.config.auto_start_minutes), 78, "auto_start_minutes")
 
         cancel = ns["NSButton"].alloc().initWithFrame_(ns["NSMakeRect"](268, 20, 80, 32))
         cancel.setTitle_("Cancel")
@@ -472,7 +482,8 @@ class SettingsPanel:
     def save_(self, _sender) -> None:
         interval_text = str(self._fields["interval"].stringValue()).strip()
         confidence_text = str(self._fields["confidence"].stringValue()).strip()
-        minutes_text = str(self._fields["auto_stop_minutes"].stringValue()).strip()
+        stop_minutes_text = str(self._fields["auto_stop_minutes"].stringValue()).strip()
+        start_minutes_text = str(self._fields["auto_start_minutes"].stringValue()).strip()
         csv_path = str(self._fields["csv"].stringValue()).strip()
         try:
             interval = float(interval_text)
@@ -490,13 +501,11 @@ class SettingsPanel:
         if not 0.0 <= confidence <= 1.0:
             _alert("Min confidence must be between 0 and 1.")
             return
-        try:
-            minutes = float(minutes_text)
-        except ValueError:
-            _alert("Auto-stop duration must be a number of minutes.")
+        stop_minutes = _parse_minutes(stop_minutes_text, "Auto-stop duration")
+        if stop_minutes is None:
             return
-        if minutes < MIN_AUTO_STOP_MINUTES:
-            _alert(f"Auto-stop duration must be at least {MIN_AUTO_STOP_MINUTES:g} minutes.")
+        start_minutes = _parse_minutes(start_minutes_text, "Auto-start delay")
+        if start_minutes is None:
             return
         if not csv_path:
             _alert("CSV folder is required.")
@@ -512,7 +521,11 @@ class SettingsPanel:
             auto_stop_enabled=bool(
                 int(self._fields["auto_stop"].state()) == int(ns["NSOnState"])
             ),
-            auto_stop_minutes=minutes,
+            auto_stop_minutes=stop_minutes,
+            auto_start_enabled=bool(
+                int(self._fields["auto_start"].state()) == int(ns["NSOnState"])
+            ),
+            auto_start_minutes=start_minutes,
             region=self.config.region,
         )
         self.done = True
@@ -528,6 +541,18 @@ class SettingsPanel:
                 pass
             self._window = None
         self._controller = None
+
+
+def _parse_minutes(text: str, what: str) -> float | None:
+    try:
+        minutes = float(text)
+    except ValueError:
+        _alert(f"{what} must be a number of minutes.")
+        return None
+    if minutes < MIN_TIMER_MINUTES:
+        _alert(f"{what} must be at least {MIN_TIMER_MINUTES:g} minutes.")
+        return None
+    return minutes
 
 
 def _alert(message: str) -> None:

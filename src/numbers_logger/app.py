@@ -21,7 +21,7 @@ from numbers_logger.parse import format_value, parse_number
 from numbers_logger.store import (
     Region,
     append_row,
-    auto_stop_elapsed,
+    duration_elapsed,
     load_config,
     new_session_csv,
     save_config,
@@ -60,6 +60,8 @@ class NumbersLoggerApp(rumps.App):
         self._last_value: float | None = None
         self._session_csv: str | None = None
         self._session_started_at: float | None = None
+        self._start_pending = False
+        self._auto_start_started_at: float | None = None
 
         self.start_item = rumps.MenuItem("Start watching", callback=self.start_watching)
         self.stop_item = rumps.MenuItem("Stop watching", callback=None)
@@ -90,6 +92,11 @@ class NumbersLoggerApp(rumps.App):
             if self.config.region is None:
                 self.select_region(None)
             return
+        if self._start_pending:
+            self._maybe_auto_start()
+            if self._start_pending:
+                self._update_pending_title()
+            return
         self._maybe_auto_stop()
 
     def start_watching(self, _sender: rumps.MenuItem | None = None) -> None:
@@ -97,6 +104,36 @@ class NumbersLoggerApp(rumps.App):
             config = self.config
         if config.region is None:
             self.select_region(None)
+            return
+        if not has_screen_recording_permission():
+            request_screen_recording_permission()
+            self._handle_permission_error()
+            return
+        if self._watching or self._start_pending:
+            return
+        # Delay only when the user clicks Start watching — never after stop.
+        if _sender is self.start_item and config.auto_start_enabled:
+            self._arm_delayed_start()
+            return
+        self._begin_capture()
+
+    def _arm_delayed_start(self) -> None:
+        with self._lock:
+            self._start_pending = True
+            self._auto_start_started_at = time.monotonic()
+            minutes = self.config.auto_start_minutes
+        self._set_watching_menu(True)
+        self._update_pending_title()
+        print(f"auto-start in {minutes:g} minutes", flush=True)
+
+    def _begin_capture(self) -> None:
+        self._start_pending = False
+        with self._lock:
+            self._auto_start_started_at = None
+            config = self.config
+        if config.region is None:
+            self._set_watching_menu(False)
+            self._title_text = IDLE_TITLE
             return
         if not has_screen_recording_permission():
             request_screen_recording_permission()
@@ -119,15 +156,37 @@ class NumbersLoggerApp(rumps.App):
 
     def stop_watching(self, _sender: rumps.MenuItem | None = None) -> None:
         self._watching = False
+        self._start_pending = False
         self._stop.set()
         thread = self._thread
         self._thread = None
         with self._lock:
             self._session_started_at = None
+            self._auto_start_started_at = None
         if thread is not None and thread.is_alive() and threading.current_thread() is not thread:
             thread.join(timeout=2.0)
         self._set_watching_menu(False)
         self._title_text = IDLE_TITLE
+
+    def _maybe_auto_start(self) -> None:
+        if not self._start_pending or self._watching:
+            return
+        with self._lock:
+            config = self.config
+            started = self._auto_start_started_at
+        if not config.auto_start_enabled:
+            print("auto-start delay disabled; starting now", flush=True)
+            self._begin_capture()
+            return
+        if not duration_elapsed(
+            started,
+            enabled=True,
+            minutes=config.auto_start_minutes,
+            now=time.monotonic(),
+        ):
+            return
+        print(f"auto-started after {config.auto_start_minutes:g} minutes", flush=True)
+        self._begin_capture()
 
     def _maybe_auto_stop(self) -> None:
         if not self._watching:
@@ -135,7 +194,7 @@ class NumbersLoggerApp(rumps.App):
         with self._lock:
             config = self.config
             started = self._session_started_at
-        if not auto_stop_elapsed(
+        if not duration_elapsed(
             started,
             enabled=config.auto_stop_enabled,
             minutes=config.auto_stop_minutes,
@@ -145,14 +204,23 @@ class NumbersLoggerApp(rumps.App):
         print(f"auto-stopped after {config.auto_stop_minutes:g} minutes", flush=True)
         self.stop_watching(None)
 
+    def _update_pending_title(self) -> None:
+        with self._lock:
+            started = self._auto_start_started_at
+            minutes = self.config.auto_start_minutes
+        if started is None:
+            return
+        remaining = minutes * 60.0 - (time.monotonic() - started)
+        self._title_text = _countdown_title(remaining)
+
     def select_region(self, _sender: rumps.MenuItem | None = None) -> None:
-        was_watching = self._watching
+        was_active = self._watching or self._start_pending
         self.stop_watching(None)
         result = _run_helper("--pick-region")
         if result is None:
             with self._lock:
                 has_region = self.config.region is not None
-            if was_watching and has_region:
+            if was_active and has_region:
                 self.start_watching(None)
             return
         try:
@@ -253,6 +321,15 @@ def _title_for_value(value: float) -> str:
     if len(text) > 10:
         return format(value, ".4g")
     return text
+
+
+def _countdown_title(remaining_seconds: float) -> str:
+    remaining = max(0, int(remaining_seconds + 0.999))
+    minutes, seconds = divmod(remaining, 60)
+    if minutes >= 60:
+        hours, minutes = divmod(minutes, 60)
+        return f"in {hours}h{minutes:02d}"
+    return f"in {minutes}:{seconds:02d}"
 
 
 def _run_helper(flag: str, expect_json: bool = True) -> dict[str, Any] | None:
