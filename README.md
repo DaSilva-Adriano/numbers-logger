@@ -53,3 +53,14 @@ Settings and the last region are stored in `~/.numbers-logger/config.json`.
 - Capture and OCR run on a background thread so the menu bar stays responsive.
 - Default interval is 1.0s (minimum 0.2s). Default CSV header: `timestamp,value,raw,region`.
 - Recordings land in `~/Documents/numbers-logger/`.
+
+## License
+
+Copyright (C) 2026 Adriano
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version.
+
+See [LICENSE](LICENSE) for the full GNU GPL v3 text.

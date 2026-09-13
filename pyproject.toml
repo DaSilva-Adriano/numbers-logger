@@ -3,6 +3,7 @@ name = "numbers-logger"
 version = "0.1.0"
 description = "Personal macOS menu-bar app that OCRs a selected screen region and logs numbers to CSV"
 readme = "README.md"
+license = { text = "GPL-3.0-or-later" }
 authors = [
     { name = "adriano", email = "adrianoj.queirosd@hes-so.ch" }
 ]
